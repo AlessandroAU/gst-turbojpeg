@@ -16,7 +16,7 @@ if benchmark_dep.found()
   
   # Encoder benchmark
   encoder_benchmark = executable('encoder_benchmark',
-    'encoder_benchmark.cpp',
+    ['encoder_benchmark.cpp', 'pattern_generator.cpp'],
     dependencies: [turbojpeg_dep, benchmark_dep],
     cpp_args: benchmark_cpp_args,
     install: false
@@ -24,8 +24,16 @@ if benchmark_dep.found()
   
   # Decoder benchmark  
   decoder_benchmark = executable('decoder_benchmark',
-    'decoder_benchmark.cpp',
+    ['decoder_benchmark.cpp', 'pattern_generator.cpp'],
     dependencies: [turbojpeg_dep, benchmark_dep],
+    cpp_args: benchmark_cpp_args,
+    install: false
+  )
+  
+  # Pattern viewer utility
+  pattern_viewer = executable('pattern_viewer',
+    ['pattern_viewer.cpp', 'pattern_generator.cpp'],
+    dependencies: [turbojpeg_dep],
     cpp_args: benchmark_cpp_args,
     install: false
   )
@@ -35,6 +43,7 @@ if benchmark_dep.found()
   benchmark('decoder_performance', decoder_benchmark)
   
   message('Google Benchmark found - benchmark targets enabled')
+  message('Pattern viewer utility enabled')
 else
   warning('Google Benchmark not found - benchmark targets disabled')
 endif

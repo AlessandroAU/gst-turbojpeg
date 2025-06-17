@@ -141,7 +141,7 @@ gst_turbojpegenc_finalize (GObject * object)
   GstTurboJpegEnc *enc = GST_TURBOJPEGENC (object);
 
   if (enc->tjInstance) {
-    tjDestroy (enc->tjInstance);
+    tj3Destroy (enc->tjInstance);
     enc->tjInstance = NULL;
   }
 
@@ -217,7 +217,7 @@ gst_turbojpegenc_start (GstVideoEncoder * encoder)
 {
   GstTurboJpegEnc *enc = GST_TURBOJPEGENC (encoder);
 
-  enc->tjInstance = tjInitCompress ();
+  enc->tjInstance = tj3Init (TJINIT_COMPRESS);
   if (!enc->tjInstance) {
     GST_ERROR_OBJECT (enc, "Failed to initialize TurboJPEG compressor");
     return FALSE;
@@ -233,7 +233,7 @@ gst_turbojpegenc_stop (GstVideoEncoder * encoder)
   GstTurboJpegEnc *enc = GST_TURBOJPEGENC (encoder);
 
   if (enc->tjInstance) {
-    tjDestroy (enc->tjInstance);
+    tj3Destroy (enc->tjInstance);
     enc->tjInstance = NULL;
   }
 
@@ -279,38 +279,23 @@ gst_turbojpegenc_set_format (GstVideoEncoder * encoder,
     gst_video_codec_state_unref (enc->input_state);
   enc->input_state = gst_video_codec_state_ref (state);
 
-  /* Allocate JPEG buffer for maximum possible size to avoid malloc/free churn */
   gint width = GST_VIDEO_INFO_WIDTH (&state->info);
   gint height = GST_VIDEO_INFO_HEIGHT (&state->info);
-  gulong max_jpeg_size = tjBufSize (width, height, enc->subsampling);
   
+  /* Clean up old buffer if it exists */
   if (enc->jpeg_buffer) {
     g_free (enc->jpeg_buffer);
+    enc->jpeg_buffer = NULL;
+    enc->jpeg_buffer_size = 0;
   }
-  enc->jpeg_buffer = g_malloc (max_jpeg_size);
-  enc->jpeg_buffer_size = max_jpeg_size;
   
-  GST_DEBUG_OBJECT (enc, "Allocated JPEG buffer of size %lu bytes for %dx%d", 
-                   max_jpeg_size, width, height);
+  GST_DEBUG_OBJECT (enc, "Set format for %dx%d", width, height);
 
-  /* Create buffer pool for output buffers to avoid per-frame allocation */
+  /* Clean up old buffer pool if it exists */
   if (enc->buffer_pool) {
     gst_buffer_pool_set_active (enc->buffer_pool, FALSE);
     gst_object_unref (enc->buffer_pool);
-  }
-  
-  enc->buffer_pool = gst_buffer_pool_new ();
-  GstStructure *config = gst_buffer_pool_get_config (enc->buffer_pool);
-  gst_buffer_pool_config_set_params (config, NULL, max_jpeg_size, 4, 8);
-  gst_buffer_pool_config_set_allocator (config, NULL, NULL);
-  
-  if (!gst_buffer_pool_set_config (enc->buffer_pool, config)) {
-    GST_ERROR_OBJECT (enc, "Failed to configure buffer pool");
-    gst_object_unref (enc->buffer_pool);
     enc->buffer_pool = NULL;
-  } else {
-    gst_buffer_pool_set_active (enc->buffer_pool, TRUE);
-    GST_DEBUG_OBJECT (enc, "Created buffer pool with %lu byte buffers", max_jpeg_size);
   }
 
   caps = gst_caps_new_simple ("image/jpeg",
@@ -350,39 +335,42 @@ gst_turbojpegenc_handle_frame (GstVideoEncoder * encoder,
   width = GST_VIDEO_FRAME_WIDTH (&vframe);
   height = GST_VIDEO_FRAME_HEIGHT (&vframe);
 
+  /* Set encoding parameters */
+  tj3Set (enc->tjInstance, TJPARAM_QUALITY, enc->quality);
+  tj3Set (enc->tjInstance, TJPARAM_SUBSAMP, enc->subsampling);
+  
   /* Enable progressive encoding if requested */
   if (enc->progressive) {
-    if (tj3Set(enc->tjInstance, TJPARAM_PROGRESSIVE, 1) != 0) {
-      GST_WARNING_OBJECT (enc, "Failed to enable progressive encoding: %s", tj3GetErrorStr(enc->tjInstance));
+    if (tj3Set (enc->tjInstance, TJPARAM_PROGRESSIVE, 1) != 0) {
+      GST_WARNING_OBJECT (enc, "Failed to enable progressive encoding: %s", tj3GetErrorStr (enc->tjInstance));
     }
   } else {
-    tj3Set(enc->tjInstance, TJPARAM_PROGRESSIVE, 0);
+    tj3Set (enc->tjInstance, TJPARAM_PROGRESSIVE, 0);
   }
   
   /* Enable optimized Huffman encoding if requested */
   if (enc->optimized_huffman) {
-    if (tj3Set(enc->tjInstance, TJPARAM_OPTIMIZE, 1) != 0) {
-      GST_WARNING_OBJECT (enc, "Failed to enable optimized Huffman: %s", tj3GetErrorStr(enc->tjInstance));
+    if (tj3Set (enc->tjInstance, TJPARAM_OPTIMIZE, 1) != 0) {
+      GST_WARNING_OBJECT (enc, "Failed to enable optimized Huffman: %s", tj3GetErrorStr (enc->tjInstance));
     }
   } else {
     /* Disable optimization for faster encoding */
-    tj3Set(enc->tjInstance, TJPARAM_OPTIMIZE, 0);
+    tj3Set (enc->tjInstance, TJPARAM_OPTIMIZE, 0);
   }
 
   tj_format = gst_turbojpegenc_get_tj_pixel_format (format);
   
-  /* Use pre-allocated buffer size */
-  jpeg_size = enc->jpeg_buffer_size;
+  /* TurboJPEG v3 allocates its own buffer */
+  guchar *tj_buffer = NULL;
   
   if (tj_format != -1) {
-    /* Direct RGB/BGR encoding with pre-allocated buffer */
+    /* Direct RGB/BGR encoding */
     guchar *src_data = GST_VIDEO_FRAME_PLANE_DATA (&vframe, 0);
     gint src_stride = GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, 0);
     
-    if (tjCompress2 (enc->tjInstance, src_data, width, src_stride, height,
-            tj_format, &enc->jpeg_buffer, &jpeg_size, enc->subsampling, 
-            enc->quality, flags | TJFLAG_FASTDCT | TJFLAG_NOREALLOC) != 0) {
-      GST_ERROR_OBJECT (enc, "Failed to compress JPEG: %s", tjGetErrorStr ());
+    if (tj3Compress8 (enc->tjInstance, src_data, width, src_stride, height,
+            tj_format, &tj_buffer, &jpeg_size) != 0) {
+      GST_ERROR_OBJECT (enc, "Failed to compress JPEG: %s", tj3GetErrorStr (enc->tjInstance));
       gst_video_frame_unmap (&vframe);
       return GST_FLOW_ERROR;
     }
@@ -404,11 +392,10 @@ gst_turbojpegenc_handle_frame (GstVideoEncoder * encoder,
     strides[1] = GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, 1);
     strides[2] = GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, 2);
     
-    if (tjCompressFromYUVPlanes (enc->tjInstance, planes, width, strides, 
-            height, enc->subsampling, &enc->jpeg_buffer, &jpeg_size, 
-            enc->quality, flags | TJFLAG_FASTDCT | TJFLAG_NOREALLOC) != 0) {
+    if (tj3CompressFromYUVPlanes8 (enc->tjInstance, planes, width, strides, 
+            height, &tj_buffer, &jpeg_size) != 0) {
       GST_ERROR_OBJECT (enc, "Failed to compress JPEG from YUV: %s", 
-          tjGetErrorStr ());
+          tj3GetErrorStr (enc->tjInstance));
       gst_video_frame_unmap (&vframe);
       return GST_FLOW_ERROR;
     }
@@ -416,38 +403,19 @@ gst_turbojpegenc_handle_frame (GstVideoEncoder * encoder,
 
   gst_video_frame_unmap (&vframe);
 
-  /* Get buffer from pool to avoid per-frame allocation */
-  if (enc->buffer_pool) {
-    GstFlowReturn pool_ret = gst_buffer_pool_acquire_buffer (enc->buffer_pool, 
-                                                           &output_buffer, NULL);
-    if (pool_ret != GST_FLOW_OK) {
-      GST_ERROR_OBJECT (enc, "Failed to acquire buffer from pool: %s", 
-                       gst_flow_get_name (pool_ret));
-      return pool_ret;
-    }
-    
-    /* Map buffer and copy JPEG data */
-    GstMapInfo map;
-    if (gst_buffer_map (output_buffer, &map, GST_MAP_WRITE)) {
-      memcpy (map.data, enc->jpeg_buffer, jpeg_size);
-      gst_buffer_unmap (output_buffer, &map);
-      gst_buffer_set_size (output_buffer, jpeg_size);
-    } else {
-      GST_ERROR_OBJECT (enc, "Failed to map output buffer");
-      gst_buffer_unref (output_buffer);
-      return GST_FLOW_ERROR;
-    }
-  } else {
-    /* Fallback to direct allocation if pool failed */
-    output_buffer = gst_buffer_new_allocate (NULL, jpeg_size, NULL);
-    if (!output_buffer) {
-      GST_ERROR_OBJECT (enc, "Failed to allocate output buffer");
-      return GST_FLOW_ERROR;
-    }
-    gst_buffer_fill (output_buffer, 0, enc->jpeg_buffer, jpeg_size);
+  /* Create output buffer and copy JPEG data */
+  output_buffer = gst_buffer_new_allocate (NULL, jpeg_size, NULL);
+  if (!output_buffer) {
+    GST_ERROR_OBJECT (enc, "Failed to allocate output buffer");
+    tj3Free (tj_buffer);
+    return GST_FLOW_ERROR;
   }
+  gst_buffer_fill (output_buffer, 0, tj_buffer, jpeg_size);
 
   frame->output_buffer = output_buffer;
+  
+  /* Free TurboJPEG allocated buffer */
+  tj3Free (tj_buffer);
 
   return gst_video_encoder_finish_frame (encoder, frame);
 }

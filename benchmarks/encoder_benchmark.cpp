@@ -3,8 +3,8 @@
 #include <vector>
 #include <memory>
 #include <cstring>
-#include <random>
 #include <stdexcept>
+#include "pattern_generator.h"
 
 class EncoderBenchmark {
 public:
@@ -22,18 +22,13 @@ public:
     }
     
     void generateTestData(int width, int height, int pixelFormat) {
-        int pixelSize = 3; // RGB
-        if (pixelFormat == TJPF_GRAY) pixelSize = 1;
-        else if (pixelFormat == TJPF_RGBA) pixelSize = 4;
-        
-        test_data.resize(width * height * pixelSize);
-        
-        // Generate some test pattern data
-        std::mt19937 rng(42); // Fixed seed for reproducibility
-        std::uniform_int_distribution<uint8_t> dist(0, 255);
-        
-        for (size_t i = 0; i < test_data.size(); ++i) {
-            test_data[i] = dist(rng);
+        // Generate SMPTE color bars test data - industry standard video test pattern
+        if (pixelFormat == TJPF_GRAY) {
+            test_data = PatternGenerator::generateGrayscale(width, height, PatternGenerator::PatternType::SMPTE_COLOR_BARS);
+        } else if (pixelFormat == TJPF_RGBA) {
+            test_data = PatternGenerator::generateRGBA(width, height, PatternGenerator::PatternType::SMPTE_COLOR_BARS);
+        } else {
+            test_data = PatternGenerator::generateRGB(width, height, PatternGenerator::PatternType::SMPTE_COLOR_BARS);
         }
         
         // Pre-allocate JPEG buffer
@@ -72,7 +67,7 @@ static void BM_EncodeRGB_720p_Quality80(benchmark::State& state) {
     
     // Calculate FPS: iterations per second
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("720p RGB -> JPEG Q80 4:2:0");
+    state.SetLabel("720p SMPTE RGB -> JPEG Q80 4:2:0");
 }
 BENCHMARK(BM_EncodeRGB_720p_Quality80)->Unit(benchmark::kMillisecond);
 
@@ -87,7 +82,7 @@ static void BM_EncodeRGB_1080p_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1920 * 1080 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("1080p RGB -> JPEG Q80 4:2:0");
+    state.SetLabel("1080p SMPTE RGB -> JPEG Q80 4:2:0");
 }
 
 static void BM_EncodeRGB_4K_Quality80(benchmark::State& state) {
@@ -101,7 +96,7 @@ static void BM_EncodeRGB_4K_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 3840 * 2160 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("4K RGB -> JPEG Q80 4:2:0");
+    state.SetLabel("4K SMPTE RGB -> JPEG Q80 4:2:0");
 }
 
 static void BM_EncodeRGB_Quality_Variations(benchmark::State& state) {
@@ -116,7 +111,7 @@ static void BM_EncodeRGB_Quality_Variations(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1920 * 1080 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("1080p RGB -> JPEG Q" + std::to_string(quality) + " 4:2:0");
+    state.SetLabel("1080p SMPTE RGB -> JPEG Q" + std::to_string(quality) + " 4:2:0");
 }
 
 static void BM_EncodeRGB_Subsampling_Variations(benchmark::State& state) {
@@ -140,7 +135,7 @@ static void BM_EncodeRGB_Subsampling_Variations(benchmark::State& state) {
         case TJSAMP_GRAY: subsample_name = "GRAY"; break;
         default: subsample_name = "UNKNOWN"; break;
     }
-    state.SetLabel("1080p RGB -> JPEG Q80 " + subsample_name);
+    state.SetLabel("1080p SMPTE RGB -> JPEG Q80 " + subsample_name);
 }
 
 // Register benchmarks

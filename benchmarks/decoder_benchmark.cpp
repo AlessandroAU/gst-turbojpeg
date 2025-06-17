@@ -3,8 +3,8 @@
 #include <vector>
 #include <memory>
 #include <cstring>
-#include <random>
 #include <stdexcept>
+#include "pattern_generator.h"
 
 class DecoderBenchmark {
 public:
@@ -22,16 +22,8 @@ public:
     }
     
     void generateJpegTestData(int width, int height, int quality, int subsampling) {
-        // Generate RGB test data
-        int pixelSize = 3;
-        std::vector<unsigned char> rgb_data(width * height * pixelSize);
-        
-        std::mt19937 rng(42); // Fixed seed for reproducibility
-        std::uniform_int_distribution<uint8_t> dist(0, 255);
-        
-        for (size_t i = 0; i < rgb_data.size(); ++i) {
-            rgb_data[i] = dist(rng);
-        }
+        // Generate RGB test data using SMPTE color bars - industry standard video test pattern
+        std::vector<unsigned char> rgb_data = PatternGenerator::generateRGB(width, height, PatternGenerator::PatternType::SMPTE_COLOR_BARS);
         
         // Compress to JPEG
         unsigned long jpeg_size = tjBufSize(width, height, subsampling);
@@ -113,9 +105,9 @@ private:
     unsigned char* yuv_planes[3];
 };
 
-static void BM_DecodeRGB_720p_Quality80(benchmark::State& state) {
+static void BM_DecodeRGB_720p_Quality85(benchmark::State& state) {
     DecoderBenchmark decoder;
-    decoder.generateJpegTestData(1280, 720, 80, TJSAMP_420);
+    decoder.generateJpegTestData(1280, 720, 85, TJSAMP_420);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToRGB();
@@ -124,12 +116,12 @@ static void BM_DecodeRGB_720p_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1280 * 720 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("720p JPEG Q80 4:2:0 -> RGB");
+    state.SetLabel("720p SMPTE JPEG Q85 4:2:0 -> RGB");
 }
 
-static void BM_DecodeRGB_1080p_Quality80(benchmark::State& state) {
+static void BM_DecodeRGB_1080p_Quality85(benchmark::State& state) {
     DecoderBenchmark decoder;
-    decoder.generateJpegTestData(1920, 1080, 80, TJSAMP_420);
+    decoder.generateJpegTestData(1920, 1080, 85, TJSAMP_420);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToRGB();
@@ -138,12 +130,12 @@ static void BM_DecodeRGB_1080p_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1920 * 1080 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("1080p JPEG Q80 4:2:0 -> RGB");
+    state.SetLabel("1080p SMPTE JPEG Q85 4:2:0 -> RGB");
 }
 
-static void BM_DecodeRGB_4K_Quality80(benchmark::State& state) {
+static void BM_DecodeRGB_4K_Quality85(benchmark::State& state) {
     DecoderBenchmark decoder;
-    decoder.generateJpegTestData(3840, 2160, 80, TJSAMP_420);
+    decoder.generateJpegTestData(3840, 2160, 85, TJSAMP_420);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToRGB();
@@ -152,12 +144,12 @@ static void BM_DecodeRGB_4K_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 3840 * 2160 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("4K JPEG Q80 4:2:0 -> RGB");
+    state.SetLabel("4K SMPTE JPEG Q85 4:2:0 -> RGB");
 }
 
-static void BM_DecodeYUV_720p_Quality80(benchmark::State& state) {
+static void BM_DecodeYUV_720p_Quality85(benchmark::State& state) {
     DecoderBenchmark decoder;
-    decoder.generateJpegTestData(1280, 720, 80, TJSAMP_420);
+    decoder.generateJpegTestData(1280, 720, 85, TJSAMP_420);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToYUV();
@@ -166,12 +158,12 @@ static void BM_DecodeYUV_720p_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1280 * 720 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("720p JPEG Q80 4:2:0 -> YUV");
+    state.SetLabel("720p SMPTE JPEG Q85 4:2:0 -> YUV");
 }
 
-static void BM_DecodeYUV_1080p_Quality80(benchmark::State& state) {
+static void BM_DecodeYUV_1080p_Quality85(benchmark::State& state) {
     DecoderBenchmark decoder;
-    decoder.generateJpegTestData(1920, 1080, 80, TJSAMP_420);
+    decoder.generateJpegTestData(1920, 1080, 85, TJSAMP_420);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToYUV();
@@ -180,12 +172,12 @@ static void BM_DecodeYUV_1080p_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1920 * 1080 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("1080p JPEG Q80 4:2:0 -> YUV");
+    state.SetLabel("1080p SMPTE JPEG Q85 4:2:0 -> YUV");
 }
 
-static void BM_DecodeYUV_4K_Quality80(benchmark::State& state) {
+static void BM_DecodeYUV_4K_Quality85(benchmark::State& state) {
     DecoderBenchmark decoder;
-    decoder.generateJpegTestData(3840, 2160, 80, TJSAMP_420);
+    decoder.generateJpegTestData(3840, 2160, 85, TJSAMP_420);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToYUV();
@@ -194,7 +186,7 @@ static void BM_DecodeYUV_4K_Quality80(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 3840 * 2160 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("4K JPEG Q80 4:2:0 -> YUV");
+    state.SetLabel("4K SMPTE JPEG Q85 4:2:0 -> YUV");
 }
 
 static void BM_DecodeRGB_Quality_Variations(benchmark::State& state) {
@@ -209,13 +201,13 @@ static void BM_DecodeRGB_Quality_Variations(benchmark::State& state) {
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * 1920 * 1080 * 3);
     
     state.counters["FPS"] = benchmark::Counter(state.iterations(), benchmark::Counter::kIsRate);
-    state.SetLabel("1080p JPEG Q" + std::to_string(quality) + " 4:2:0 -> RGB");
+    state.SetLabel("1080p SMPTE JPEG Q" + std::to_string(quality) + " 4:2:0 -> RGB");
 }
 
 static void BM_DecodeRGB_Subsampling_Variations(benchmark::State& state) {
     DecoderBenchmark decoder;
     int subsampling = state.range(0);
-    decoder.generateJpegTestData(1920, 1080, 80, subsampling);
+    decoder.generateJpegTestData(1920, 1080, 85, subsampling);
     
     for (auto _ : state) {
         decoder.benchmarkDecodeToRGB();
@@ -233,17 +225,17 @@ static void BM_DecodeRGB_Subsampling_Variations(benchmark::State& state) {
         case TJSAMP_GRAY: subsample_name = "GRAY"; break;
         default: subsample_name = "UNKNOWN"; break;
     }
-    state.SetLabel("1080p JPEG Q80 " + subsample_name + " -> RGB");
+    state.SetLabel("1080p SMPTE JPEG Q85 " + subsample_name + " -> RGB");
 }
 
 // Register benchmarks  
-BENCHMARK(BM_DecodeRGB_720p_Quality80)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_DecodeRGB_1080p_Quality80)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_DecodeRGB_4K_Quality80)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DecodeRGB_720p_Quality85)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DecodeRGB_1080p_Quality85)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DecodeRGB_4K_Quality85)->Unit(benchmark::kMillisecond);
 
-BENCHMARK(BM_DecodeYUV_720p_Quality80)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_DecodeYUV_1080p_Quality80)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_DecodeYUV_4K_Quality80)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DecodeYUV_720p_Quality85)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DecodeYUV_1080p_Quality85)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_DecodeYUV_4K_Quality85)->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_DecodeRGB_Quality_Variations)->Arg(50)->Arg(75)->Arg(90)->Arg(95)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_DecodeRGB_Subsampling_Variations)->Arg(TJSAMP_444)->Arg(TJSAMP_422)->Arg(TJSAMP_420)->Arg(TJSAMP_GRAY)->Unit(benchmark::kMillisecond);

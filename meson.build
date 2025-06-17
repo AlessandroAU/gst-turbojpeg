@@ -18,6 +18,7 @@ message('Building TurboJPEG from submodule source...')
 # Build libjpeg-turbo using external command
 libjpeg_build_dir = meson.current_build_dir() / 'libjpeg-turbo-build'
 
+#for static and dynamic builds "turbojpeg turbojpeg-static"
 # Custom target to build libjpeg-turbo
 libjpeg_build = custom_target('libjpeg-turbo-build',
   command: [

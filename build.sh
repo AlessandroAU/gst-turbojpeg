@@ -186,18 +186,7 @@ show_post_install() {
         echo "To install manually:"
         echo "  sudo meson install -C $BUILD_DIR"
     fi
-    
-    echo ""
-    echo "Test scripts available:"
-    echo "  ./test_pipeline.sh    - Interactive pipeline testing"
-    echo "  ./test_performance.sh - SIMD/NEON and multithreading benchmarks"
-    echo ""
-    echo "Key Features:"
-    echo "  ✓ SIMD/NEON acceleration (automatic on ARM64)"
-    echo "  ✓ Configurable multithreading (num-threads property)"
-    echo "  ✓ Automatic thread detection"
-    echo "  ✓ Multithreading threshold control"
-    echo ""
+
     echo "Example usage:"
     echo "  gst-launch-1.0 videotestsrc ! jpegenc ! turbojpegdec ! autovideosink"
     echo "  gst-launch-1.0 videotestsrc ! jpegenc ! turbojpegdec num-threads=4 ! autovideosink"

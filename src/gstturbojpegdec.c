@@ -110,7 +110,7 @@ gst_turbojpegdec_finalize (GObject * object)
   GstTurboJpegDec *dec = GST_TURBOJPEGDEC (object);
 
   if (dec->tjInstance) {
-    tjDestroy (dec->tjInstance);
+    tj3Destroy (dec->tjInstance);
     dec->tjInstance = NULL;
   }
 
@@ -159,7 +159,7 @@ gst_turbojpegdec_start (GstVideoDecoder * decoder)
 {
   GstTurboJpegDec *dec = GST_TURBOJPEGDEC (decoder);
 
-  dec->tjInstance = tjInitDecompress ();
+  dec->tjInstance = tj3Init (TJINIT_DECOMPRESS);
   if (!dec->tjInstance) {
     GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG decompressor");
     return FALSE;
@@ -177,7 +177,7 @@ gst_turbojpegdec_stop (GstVideoDecoder * decoder)
   GstTurboJpegDec *dec = GST_TURBOJPEGDEC (decoder);
 
   if (dec->tjInstance) {
-    tjDestroy (dec->tjInstance);
+    tj3Destroy (dec->tjInstance);
     dec->tjInstance = NULL;
   }
 
@@ -258,9 +258,8 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
     return GST_FLOW_ERROR;
   }
 
-  if (tjDecompressHeader3 (dec->tjInstance, map.data, map.size,
-          &width, &height, &subsamp, &colorspace) != 0) {
-    GST_ERROR_OBJECT (dec, "Failed to read JPEG header: %s", tjGetErrorStr ());
+  if (tj3DecompressHeader (dec->tjInstance, map.data, map.size) != 0) {
+    GST_ERROR_OBJECT (dec, "Failed to read JPEG header: %s", tj3GetErrorStr (dec->tjInstance));
     gst_buffer_unmap (frame->input_buffer, &map);
     dec->error_count++;
     if (dec->error_count >= dec->max_errors) {
@@ -269,8 +268,13 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
     return GST_FLOW_OK;
   }
 
-  tj_width = width;
-  tj_height = height;
+  tj_width = tj3Get (dec->tjInstance, TJPARAM_JPEGWIDTH);
+  tj_height = tj3Get (dec->tjInstance, TJPARAM_JPEGHEIGHT);
+  subsamp = tj3Get (dec->tjInstance, TJPARAM_SUBSAMP);
+  colorspace = tj3Get (dec->tjInstance, TJPARAM_COLORSPACE);
+  
+  width = tj_width;
+  height = tj_height;
 
   /* Implement proper format negotiation - prefer I420 for pipeline compatibility */
   GstCaps *allowed_caps = gst_pad_get_allowed_caps (GST_VIDEO_DECODER_SRC_PAD (decoder));
@@ -353,10 +357,9 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
     strides[1] = GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, 1);
     strides[2] = GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, 2);
     
-    if (tjDecompressToYUVPlanes (dec->tjInstance, map.data, map.size,
-            planes, tj_width, strides, tj_height, 
-            TJFLAG_FASTDCT | TJFLAG_FASTUPSAMPLE) != 0) {
-      GST_ERROR_OBJECT (dec, "Failed to decompress JPEG to YUV: %s", tjGetErrorStr ());
+    if (tj3DecompressToYUVPlanes8 (dec->tjInstance, map.data, map.size,
+            planes, strides) != 0) {
+      GST_ERROR_OBJECT (dec, "Failed to decompress JPEG to YUV: %s", tj3GetErrorStr (dec->tjInstance));
       gst_video_frame_unmap (&vframe);
       gst_buffer_unmap (frame->input_buffer, &map);
       dec->error_count++;
@@ -369,10 +372,9 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
     /* Use RGB decompression with SIMD acceleration */
     output_data = GST_VIDEO_FRAME_PLANE_DATA (&vframe, 0);
     
-    if (tjDecompress2 (dec->tjInstance, map.data, map.size,
-            output_data, tj_width, 0, tj_height, tj_format, 
-            TJFLAG_FASTDCT | TJFLAG_FASTUPSAMPLE) != 0) {
-      GST_ERROR_OBJECT (dec, "Failed to decompress JPEG to RGB: %s", tjGetErrorStr ());
+    if (tj3Decompress8 (dec->tjInstance, map.data, map.size,
+            output_data, GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, 0), tj_format) != 0) {
+      GST_ERROR_OBJECT (dec, "Failed to decompress JPEG to RGB: %s", tj3GetErrorStr (dec->tjInstance));
       gst_video_frame_unmap (&vframe);
       gst_buffer_unmap (frame->input_buffer, &map);
       dec->error_count++;
