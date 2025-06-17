@@ -12,11 +12,32 @@ gst_dep = dependency('gstreamer-1.0', version : gst_req)
 gstbase_dep = dependency('gstreamer-base-1.0', version : gst_req)
 gstvideo_dep = dependency('gstreamer-video-1.0', version : gst_req)
 
-turbojpeg_dep = dependency('libturbojpeg')
-message('Using TurboJPEG: @0@ (version: @1@)'.format(
-  turbojpeg_dep.name(), 
-  turbojpeg_dep.version() != 'unknown' ? turbojpeg_dep.version() : 'unknown'
-))
+# Force building from submodule source (ignore system package)
+message('Building TurboJPEG from submodule source...')
+
+# Build libjpeg-turbo using external command
+libjpeg_build_dir = meson.current_build_dir() / 'libjpeg-turbo-build'
+
+# Custom target to build libjpeg-turbo
+libjpeg_build = custom_target('libjpeg-turbo-build',
+  command: [
+    'sh', '-c', 
+    'mkdir -p @0@ && cd @0@ && cmake @1@/subprojects/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release -DWITH_TURBOJPEG=ON -DENABLE_SHARED=ON -DENABLE_STATIC=ON && make -j$(nproc) turbojpeg turbojpeg-static && cp libturbojpeg.so* @2@/ && cp libturbojpeg.a @2@/'.format(libjpeg_build_dir, meson.current_source_dir(), meson.current_build_dir())
+  ],
+  output: ['stamp'],
+  build_by_default: true,
+  build_always_stale: true,
+  console: true
+)
+
+# Create dependency using static library for better portability
+turbojpeg_inc = include_directories('subprojects/libjpeg-turbo/src')
+turbojpeg_static_lib_path = meson.current_build_dir() / 'libturbojpeg.a'
+turbojpeg_dep = declare_dependency(
+  link_args: [turbojpeg_static_lib_path],
+  include_directories: turbojpeg_inc,
+  sources: libjpeg_build
+)
 
 # Add version info to your code
 plugin_c_args = ['-DHAVE_CONFIG_H', '-O3', '-ffast-math', '-funroll-loops', '-ftree-vectorize', '-march=native']
@@ -46,31 +67,5 @@ gstturbojpeg = library('gstturbojpeg',
   install_dir : join_paths(get_option('libdir'), 'gstreamer-1.0'),
 )
 
-# Benchmark dependencies
-benchmark_dep = dependency('benchmark', required: false)
-
-if benchmark_dep.found()
-  # Encoder benchmark
-  encoder_benchmark = executable('encoder_benchmark',
-    'benchmarks/encoder_benchmark.cpp',
-    dependencies: [turbojpeg_dep, benchmark_dep],
-    cpp_args: ['-std=c++11', '-O3', '-ffast-math', '-funroll-loops', '-ftree-vectorize', '-march=native'],
-    install: false
-  )
-  
-  # Decoder benchmark  
-  decoder_benchmark = executable('decoder_benchmark',
-    'benchmarks/decoder_benchmark.cpp',
-    dependencies: [turbojpeg_dep, benchmark_dep],
-    cpp_args: ['-std=c++11', '-O3', '-ffast-math', '-funroll-loops', '-ftree-vectorize', '-march=native'],
-    install: false
-  )
-  
-  # Register benchmarks
-  benchmark('encoder_performance', encoder_benchmark)
-  benchmark('decoder_performance', decoder_benchmark)
-  
-  message('Google Benchmark found - benchmark targets enabled')
-else
-  warning('Google Benchmark not found - benchmark targets disabled')
-endif
+# Build benchmarks in subdirectory
+subdir('benchmarks')
