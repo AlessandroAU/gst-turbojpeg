@@ -48,7 +48,7 @@ static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ I420, RGB, BGR, RGBx, BGRx, GRAY8 }"))
+    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ I420, YV12, Y42B, Y444, RGB, BGR, RGBx, BGRx, GRAY8 }"))
     );
 
 #define gst_turbojpegdec_parent_class parent_class
@@ -303,7 +303,6 @@ gst_turbojpegdec_decode_rgb (GstTurboJpegDec * dec, GstMapInfo * map_info,
   gint stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 0);
   gint width = GST_VIDEO_FRAME_WIDTH (frame);
   gint height = GST_VIDEO_FRAME_HEIGHT (frame);
-  gsize expected_size;
   int ret;
 
   if (tjpf < 0) {
@@ -350,61 +349,100 @@ gst_turbojpegdec_decode_rgb (GstTurboJpegDec * dec, GstMapInfo * map_info,
 
 static GstFlowReturn
 gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
-    GstVideoFrame * frame)
+    GstVideoFrame * frame, gint subsamp)
 {
-  /* For now, decode to RGB first then convert to avoid complex YUV issues */
-  GstFlowReturn ret;
-  GstVideoFrame temp_frame;
-  GstBuffer *temp_buffer;
-  GstVideoInfo temp_info;
-  
   gint width = GST_VIDEO_FRAME_WIDTH (frame);
   gint height = GST_VIDEO_FRAME_HEIGHT (frame);
+  GstVideoFormat format = GST_VIDEO_FRAME_FORMAT (frame);
+  unsigned char *yuvBuf = NULL;
+  size_t yuvBufSize;
+  int ret;
+  guint8 *y_plane, *u_plane, *v_plane;
+  gint y_stride, u_stride, v_stride;
+  gint y_size, u_size;
+  gint y_height, u_height, v_height;
+  gint u_width, v_width;
 
-  /* Create temporary RGB buffer for decoding */
-  gst_video_info_init (&temp_info);
-  gst_video_info_set_format (&temp_info, GST_VIDEO_FORMAT_RGB, width, height);
+  GST_LOG_OBJECT (dec, "Direct YUV decoding: %dx%d, subsampling: %d, format: %s", 
+      width, height, subsamp, gst_video_format_to_string (format));
+
+  g_mutex_lock (&dec->tjInstance_lock);
+  yuvBufSize = tj3YUVBufSize (width, 4, height, subsamp);
+  g_mutex_unlock (&dec->tjInstance_lock);
   
-  temp_buffer = gst_buffer_new_allocate (NULL, temp_info.size, NULL);
-  if (!temp_buffer) {
-    GST_ERROR_OBJECT (dec, "Failed to allocate temporary RGB buffer");
+  if (yuvBufSize == 0) {
+    GST_ERROR_OBJECT (dec, "Failed to calculate YUV buffer size");
     return GST_FLOW_ERROR;
   }
 
-  if (!gst_video_frame_map (&temp_frame, &temp_info, temp_buffer, GST_MAP_WRITE)) {
-    GST_ERROR_OBJECT (dec, "Failed to map temporary RGB buffer");
-    gst_buffer_unref (temp_buffer);
+  yuvBuf = g_malloc (yuvBufSize);
+  if (!yuvBuf) {
+    GST_ERROR_OBJECT (dec, "Failed to allocate YUV buffer of size %" G_GSIZE_FORMAT, yuvBufSize);
     return GST_FLOW_ERROR;
   }
 
-  /* Decode JPEG to RGB */
-  ret = gst_turbojpegdec_decode_rgb (dec, map_info, &temp_frame);
-  
-  if (ret == GST_FLOW_OK) {
-    /* Convert RGB to I420 using GStreamer's converter */
-    GstVideoConverter *converter;
-    GstVideoInfo rgb_info, yuv_info;
-    
-    gst_video_info_init (&rgb_info);
-    gst_video_info_set_format (&rgb_info, GST_VIDEO_FORMAT_RGB, width, height);
-    
-    gst_video_info_init (&yuv_info);  
-    gst_video_info_set_format (&yuv_info, GST_VIDEO_FORMAT_I420, width, height);
-    
-    converter = gst_video_converter_new (&rgb_info, &yuv_info, NULL);
-    if (converter) {
-      gst_video_converter_frame (converter, &temp_frame, frame);
-      gst_video_converter_free (converter);
-    } else {
-      GST_ERROR_OBJECT (dec, "Failed to create video converter");
-      ret = GST_FLOW_ERROR;
+  g_mutex_lock (&dec->tjInstance_lock);
+  ret = tj3DecompressToYUV8 (dec->tjInstance, map_info->data, map_info->size, yuvBuf, 4);
+  g_mutex_unlock (&dec->tjInstance_lock);
+
+  if (ret < 0) {
+    GST_ERROR_OBJECT (dec, "TurboJPEG YUV decompression failed: %s",
+        tj3GetErrorStr (dec->tjInstance));
+    g_free (yuvBuf);
+    dec->error_count++;
+    if (dec->error_count >= dec->max_errors) {
+      GST_ELEMENT_ERROR (dec, STREAM, DECODE, 
+          ("Too many decode errors"), 
+          ("Error count reached maximum of %d", dec->max_errors));
+      return GST_FLOW_ERROR;
     }
+    return GST_FLOW_ERROR;
   }
 
-  gst_video_frame_unmap (&temp_frame);
-  gst_buffer_unref (temp_buffer);
+  y_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
+  y_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 0);
+  y_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 0);
 
-  return ret;
+  u_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 1);
+  u_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 1);
+  v_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 2);
+  v_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 2);
+
+  if (format == GST_VIDEO_FORMAT_YV12) {
+    u_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 2);
+    v_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 1);
+    u_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 2);
+    v_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 1);
+  } else {
+    u_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 1);
+    v_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 2);
+    u_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 1);
+    v_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 2);
+  }
+
+  g_mutex_lock (&dec->tjInstance_lock);
+  y_size = tj3YUVPlaneSize (0, width, 0, height, subsamp);
+  u_size = tj3YUVPlaneSize (1, width, 0, height, subsamp);
+  g_mutex_unlock (&dec->tjInstance_lock);
+
+  unsigned char *src_y = yuvBuf;
+  unsigned char *src_u = yuvBuf + y_size;
+  unsigned char *src_v = yuvBuf + y_size + u_size;
+
+  for (gint i = 0; i < y_height; i++) {
+    memcpy (y_plane + i * y_stride, src_y + i * width, width);
+  }
+
+  for (gint i = 0; i < u_height; i++) {
+    memcpy (u_plane + i * u_stride, src_u + i * u_width, u_width);
+  }
+
+  for (gint i = 0; i < v_height; i++) {
+    memcpy (v_plane + i * v_stride, src_v + i * v_width, v_width);
+  }
+
+  g_free (yuvBuf);
+  return GST_FLOW_OK;
 }
 
 static GstFlowReturn
@@ -492,8 +530,10 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
   }
 
   /* Decode based on output format */
-  if (GST_VIDEO_FRAME_FORMAT (&video_frame) == GST_VIDEO_FORMAT_I420) {
-    ret = gst_turbojpegdec_decode_yuv (dec, &map_info, &video_frame);
+  GstVideoFormat format = GST_VIDEO_FRAME_FORMAT (&video_frame);
+  if (format == GST_VIDEO_FORMAT_I420 || format == GST_VIDEO_FORMAT_YV12 ||
+      format == GST_VIDEO_FORMAT_Y42B || format == GST_VIDEO_FORMAT_Y444) {
+    ret = gst_turbojpegdec_decode_yuv (dec, &map_info, &video_frame, subsamp);
   } else {
     ret = gst_turbojpegdec_decode_rgb (dec, &map_info, &video_frame);
   }

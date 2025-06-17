@@ -301,10 +301,90 @@ static void BM_GstDecodeRGB_4K(benchmark::State& state) {
     g_benchmark.reset();
 }
 
+static void BM_GstDecodeI420_720p(benchmark::State& state) {
+    const int width = 1280, height = 720;
+    const std::string format = "I420";
+    const std::string jpeg_file = "test_patterns/smpte_color_bars_720p_smpte_color_bars_rgb.jpg";
+    
+    g_benchmark.reset(new GstreamerDecoderBenchmark());
+    
+    if (!g_benchmark->loadJpegFile(jpeg_file)) {
+        state.SkipWithError(("Failed to load JPEG file: " + jpeg_file).c_str());
+        return;
+    }
+    
+    g_benchmark->setupPipeline(format);
+    g_benchmark->resetFrameCount();
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (auto _ : state) {
+        g_benchmark->benchmarkDecode();
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    // Validate that we processed exactly one frame per iteration
+    if (g_benchmark->getFramesProcessed() != static_cast<size_t>(state.iterations())) {
+        state.SkipWithError(("Frame count mismatch: expected " + std::to_string(state.iterations()) + 
+                           ", got " + std::to_string(g_benchmark->getFramesProcessed())).c_str());
+        return;
+    }
+    
+    // Calculate metrics
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * getFrameSize(width, height, format));
+    calculateAndSetFPS(state, start_time, end_time);
+    state.SetLabel("1080p SMPTE JPEG -> " + format + "");
+    
+    g_benchmark->cleanup();
+    g_benchmark.reset();
+}
+
 static void BM_GstDecodeI420_1080p(benchmark::State& state) {
     const int width = 1920, height = 1080;
     const std::string format = "I420";
     const std::string jpeg_file = "test_patterns/smpte_color_bars_1080p_smpte_color_bars_rgb.jpg";
+    
+    g_benchmark.reset(new GstreamerDecoderBenchmark());
+    
+    if (!g_benchmark->loadJpegFile(jpeg_file)) {
+        state.SkipWithError(("Failed to load JPEG file: " + jpeg_file).c_str());
+        return;
+    }
+    
+    g_benchmark->setupPipeline(format);
+    g_benchmark->resetFrameCount();
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (auto _ : state) {
+        g_benchmark->benchmarkDecode();
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    // Validate that we processed exactly one frame per iteration
+    if (g_benchmark->getFramesProcessed() != static_cast<size_t>(state.iterations())) {
+        state.SkipWithError(("Frame count mismatch: expected " + std::to_string(state.iterations()) + 
+                           ", got " + std::to_string(g_benchmark->getFramesProcessed())).c_str());
+        return;
+    }
+    
+    // Calculate metrics
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * getFrameSize(width, height, format));
+    calculateAndSetFPS(state, start_time, end_time);
+    state.SetLabel("1080p SMPTE JPEG -> " + format + "");
+    
+    g_benchmark->cleanup();
+    g_benchmark.reset();
+}
+
+static void BM_GstDecodeI420_4K(benchmark::State& state) {
+    const int width = 3840, height = 2160;
+    const std::string format = "I420";
+    const std::string jpeg_file = "test_patterns/smpte_color_bars_4k_smpte_color_bars_rgb.jpg";
     
     g_benchmark.reset(new GstreamerDecoderBenchmark());
     
@@ -403,7 +483,9 @@ static void BM_GstDecodeRGB_PatternVariations(benchmark::State& state) {
 BENCHMARK(BM_GstDecodeRGB_720p)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstDecodeRGB_1080p)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstDecodeRGB_4K)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_GstDecodeI420_720p)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstDecodeI420_1080p)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_GstDecodeI420_4K)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstDecodeRGB_PatternVariations)->Arg(0)->Arg(1)->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();
