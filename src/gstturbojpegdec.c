@@ -114,8 +114,9 @@ gst_turbojpegdec_class_init (GstTurboJpegDecClass * klass)
 static void
 gst_turbojpegdec_init (GstTurboJpegDec * dec)
 {
-  dec->tjInstance = NULL;
-  g_mutex_init (&dec->tjInstance_lock);
+  dec->tjInstanceHeader = NULL;
+  dec->tjInstanceRGB = NULL;
+  dec->tjInstanceYUV = NULL;
   dec->max_errors = DEFAULT_MAX_ERRORS;
   dec->error_count = 0;
   dec->input_state = NULL;
@@ -128,8 +129,6 @@ static void
 gst_turbojpegdec_finalize (GObject * object)
 {
   GstTurboJpegDec *dec = GST_TURBOJPEGDEC (object);
-
-  g_mutex_clear (&dec->tjInstance_lock);
 
   if (dec->input_state)
     gst_video_codec_state_unref (dec->input_state);
@@ -178,9 +177,28 @@ gst_turbojpegdec_start (GstVideoDecoder * decoder)
 
   GST_DEBUG_OBJECT (dec, "Starting TurboJPEG decoder");
 
-  dec->tjInstance = tj3Init (TJINIT_DECOMPRESS);
-  if (!dec->tjInstance) {
-    GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG decompressor");
+  /* Initialize dedicated TurboJPEG instances */
+  dec->tjInstanceHeader = tj3Init (TJINIT_DECOMPRESS);
+  if (!dec->tjInstanceHeader) {
+    GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG header instance");
+    return FALSE;
+  }
+
+  dec->tjInstanceRGB = tj3Init (TJINIT_DECOMPRESS);
+  if (!dec->tjInstanceRGB) {
+    GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG RGB instance");
+    tj3Destroy (dec->tjInstanceHeader);
+    dec->tjInstanceHeader = NULL;
+    return FALSE;
+  }
+
+  dec->tjInstanceYUV = tj3Init (TJINIT_DECOMPRESS);
+  if (!dec->tjInstanceYUV) {
+    GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG YUV instance");
+    tj3Destroy (dec->tjInstanceHeader);
+    tj3Destroy (dec->tjInstanceRGB);
+    dec->tjInstanceHeader = NULL;
+    dec->tjInstanceRGB = NULL;
     return FALSE;
   }
 
@@ -197,9 +215,20 @@ gst_turbojpegdec_stop (GstVideoDecoder * decoder)
 
   GST_DEBUG_OBJECT (dec, "Stopping TurboJPEG decoder");
 
-  if (dec->tjInstance) {
-    tj3Destroy (dec->tjInstance);
-    dec->tjInstance = NULL;
+  /* Cleanup TurboJPEG instances */
+  if (dec->tjInstanceHeader) {
+    tj3Destroy (dec->tjInstanceHeader);
+    dec->tjInstanceHeader = NULL;
+  }
+
+  if (dec->tjInstanceRGB) {
+    tj3Destroy (dec->tjInstanceRGB);
+    dec->tjInstanceRGB = NULL;
+  }
+
+  if (dec->tjInstanceYUV) {
+    tj3Destroy (dec->tjInstanceYUV);
+    dec->tjInstanceYUV = NULL;
   }
 
   if (dec->input_state) {
@@ -326,14 +355,12 @@ gst_turbojpegdec_decode_rgb (GstTurboJpegDec * dec, GstMapInfo * map_info,
   GST_LOG_OBJECT (dec, "Decoding RGB: %dx%d, stride=%d, format=%s, tjpf=%d",
       width, height, stride, gst_video_format_to_string (format), tjpf);
 
-  g_mutex_lock (&dec->tjInstance_lock);
-  ret = tj3Decompress8 (dec->tjInstance, map_info->data, map_info->size,
+  ret = tj3Decompress8 (dec->tjInstanceRGB, map_info->data, map_info->size,
       dest, stride, tjpf);
-  g_mutex_unlock (&dec->tjInstance_lock);
 
   if (ret < 0) {
     GST_ERROR_OBJECT (dec, "TurboJPEG decompression failed: %s",
-        tj3GetErrorStr (dec->tjInstance));
+        tj3GetErrorStr (dec->tjInstanceRGB));
     dec->error_count++;
     if (dec->error_count >= dec->max_errors) {
       GST_ELEMENT_ERROR (dec, STREAM, DECODE, 
@@ -354,20 +381,12 @@ gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
   GstVideoFormat format = GST_VIDEO_FRAME_FORMAT (frame);
   gint width = GST_VIDEO_FRAME_WIDTH (frame);
   gint height = GST_VIDEO_FRAME_HEIGHT (frame);
-  tjhandle tjInstanceYUV = NULL;
   unsigned char *gstPlanes[3];
   int gstStrides[3];
   int ret;
   
   GST_LOG_OBJECT (dec, "Direct YUV decoding: %dx%d, subsampling: %d, format: %s", 
       width, height, subsamp, gst_video_format_to_string (format));
-
-  /* Create fresh TurboJPEG instance for YUV */
-  tjInstanceYUV = tj3Init (TJINIT_DECOMPRESS);
-  if (!tjInstanceYUV) {
-    GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG instance for YUV");
-    return GST_FLOW_ERROR;
-  }
 
   /* Get GStreamer plane pointers and strides */
   gstPlanes[0] = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
@@ -442,7 +461,6 @@ gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
       g_free (tjPlanes[0]);
       g_free (tjPlanes[1]);
       g_free (tjPlanes[2]);
-      tj3Destroy (tjInstanceYUV);
       return GST_FLOW_ERROR;
     }
     
@@ -451,16 +469,15 @@ gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
     tjStrides[2] = tj_v_width;
     
     /* Decompress to TurboJPEG buffers with original subsampling */
-    ret = tj3DecompressToYUVPlanes8 (tjInstanceYUV, map_info->data, map_info->size,
+    ret = tj3DecompressToYUVPlanes8 (dec->tjInstanceYUV, map_info->data, map_info->size,
         tjPlanes, tjStrides);
         
     if (ret < 0) {
       GST_ERROR_OBJECT (dec, "TurboJPEG YUV decompression failed: %s",
-          tj3GetErrorStr (tjInstanceYUV));
+          tj3GetErrorStr (dec->tjInstanceYUV));
       g_free (tjPlanes[0]);
       g_free (tjPlanes[1]);
       g_free (tjPlanes[2]);
-      tj3Destroy (tjInstanceYUV);
       return GST_FLOW_ERROR;
     }
     
@@ -506,13 +523,12 @@ gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
     
   } else {
     /* Direct YUV decompression when formats match */
-    ret = tj3DecompressToYUVPlanes8 (tjInstanceYUV, map_info->data, map_info->size,
+    ret = tj3DecompressToYUVPlanes8 (dec->tjInstanceYUV, map_info->data, map_info->size,
         gstPlanes, gstStrides);
   }
 
   /* Error handling is done within each branch above */
   if (ret < 0) {
-    tj3Destroy (tjInstanceYUV);
     dec->error_count++;
     if (dec->error_count >= dec->max_errors) {
       GST_ELEMENT_ERROR (dec, STREAM, DECODE, 
@@ -522,8 +538,6 @@ gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
     }
     return GST_FLOW_ERROR;
   }
-
-  tj3Destroy (tjInstanceYUV);
 
   GST_LOG_OBJECT (dec, "Direct YUV decompression successful");
   return GST_FLOW_OK;
@@ -561,19 +575,16 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
     return GST_FLOW_ERROR;
   }
 
-  g_mutex_lock (&dec->tjInstance_lock);
-  if (tj3DecompressHeader (dec->tjInstance, map_info.data, map_info.size) < 0) {
+  if (tj3DecompressHeader (dec->tjInstanceHeader, map_info.data, map_info.size) < 0) {
     GST_ERROR_OBJECT (dec, "Failed to decompress JPEG header: %s",
-        tj3GetErrorStr (dec->tjInstance));
-    g_mutex_unlock (&dec->tjInstance_lock);
+        tj3GetErrorStr (dec->tjInstanceHeader));
     gst_buffer_unmap (frame->input_buffer, &map_info);
     return GST_FLOW_ERROR;
   }
 
-  width = tj3Get (dec->tjInstance, TJPARAM_JPEGWIDTH);
-  height = tj3Get (dec->tjInstance, TJPARAM_JPEGHEIGHT);
-  subsamp = tj3Get (dec->tjInstance, TJPARAM_SUBSAMP);
-  g_mutex_unlock (&dec->tjInstance_lock);
+  width = tj3Get (dec->tjInstanceHeader, TJPARAM_JPEGWIDTH);
+  height = tj3Get (dec->tjInstanceHeader, TJPARAM_JPEGHEIGHT);
+  subsamp = tj3Get (dec->tjInstanceHeader, TJPARAM_SUBSAMP);
 
   /* Validate dimensions */
   if (width <= 0 || height <= 0 || width > 32768 || height > 32768) {

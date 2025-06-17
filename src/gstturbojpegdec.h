@@ -25,9 +25,10 @@ typedef struct _GstTurboJpegDecClass GstTurboJpegDecClass;
 struct _GstTurboJpegDec
 {
   GstVideoDecoder parent;
-
-  tjhandle tjInstance;
-  GMutex tjInstance_lock;
+  
+  tjhandle tjInstanceHeader;
+  tjhandle tjInstanceRGB;
+  tjhandle tjInstanceYUV;
   
   gint max_errors;
   gint error_count;
