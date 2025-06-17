@@ -7,21 +7,12 @@ gstreamer_app_dep = dependency('gstreamer-app-1.0', required: false)
 gstreamer_video_dep = dependency('gstreamer-video-1.0', required: false)
 
 if benchmark_dep.found()
-  # Common benchmark arguments
-  benchmark_cpp_args = [
-    '-std=c++14', 
-    '-O3', 
-    '-ffast-math', 
-    '-funroll-loops', 
-    '-ftree-vectorize', 
-    '-march=native'
-  ]
   
   # Encoder benchmark (libturbojpeg)
   encoder_benchmark = executable('encoder_benchmark',
     ['encoder_benchmark.cpp', 'pattern_generator.cpp'],
     dependencies: [turbojpeg_dep, benchmark_dep],
-    cpp_args: benchmark_cpp_args,
+    cpp_args: perf_c_args,
     install: false
   )
   
@@ -29,7 +20,7 @@ if benchmark_dep.found()
   decoder_benchmark = executable('decoder_benchmark',
     ['decoder_benchmark.cpp', 'pattern_generator.cpp'],
     dependencies: [turbojpeg_dep, benchmark_dep],
-    cpp_args: benchmark_cpp_args,
+    cpp_args: perf_c_args,
     install: false
   )
   
@@ -38,7 +29,7 @@ if benchmark_dep.found()
     gst_encoder_benchmark = executable('gst_encoder_benchmark',
       ['gst_encoder_benchmark.cpp', 'pattern_generator.cpp'],
       dependencies: [gstreamer_dep, gstreamer_app_dep, gstreamer_video_dep, benchmark_dep],
-      cpp_args: benchmark_cpp_args,
+      cpp_args: perf_c_args,
       install: false
     )
     
@@ -46,7 +37,7 @@ if benchmark_dep.found()
     gst_decoder_benchmark = executable('gst_decoder_benchmark',
       ['gst_decoder_benchmark.cpp', 'pattern_generator.cpp'],
       dependencies: [gstreamer_dep, gstreamer_app_dep, gstreamer_video_dep, benchmark_dep],
-      cpp_args: benchmark_cpp_args,
+      cpp_args: perf_c_args,
       install: false
     )
     
@@ -63,7 +54,7 @@ if benchmark_dep.found()
   pattern_viewer = executable('pattern_viewer',
     ['pattern_viewer.cpp', 'pattern_generator.cpp'],
     dependencies: [turbojpeg_dep],
-    cpp_args: benchmark_cpp_args,
+    cpp_args: perf_c_args,
     install: false
   )
   
