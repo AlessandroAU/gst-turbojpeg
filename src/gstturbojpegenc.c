@@ -22,7 +22,7 @@ enum
 
 #define DEFAULT_QUALITY 80
 #define DEFAULT_SUBSAMPLING TJSAMP_420  /* 4:2:0 subsampling */
-#define DEFAULT_OPTIMIZED_HUFFMAN TRUE
+#define DEFAULT_OPTIMIZED_HUFFMAN FALSE
 #define DEFAULT_PROGRESSIVE FALSE
 
 static GstStaticPadTemplate gst_turbojpegenc_sink_pad_template =
@@ -350,11 +350,24 @@ gst_turbojpegenc_handle_frame (GstVideoEncoder * encoder,
   width = GST_VIDEO_FRAME_WIDTH (&vframe);
   height = GST_VIDEO_FRAME_HEIGHT (&vframe);
 
-  /* Set encoding flags */
+  /* Enable progressive encoding if requested */
   if (enc->progressive) {
-    flags |= TJFLAG_PROGRESSIVE;
+    if (tj3Set(enc->tjInstance, TJPARAM_PROGRESSIVE, 1) != 0) {
+      GST_WARNING_OBJECT (enc, "Failed to enable progressive encoding: %s", tj3GetErrorStr(enc->tjInstance));
+    }
+  } else {
+    tj3Set(enc->tjInstance, TJPARAM_PROGRESSIVE, 0);
   }
-  /* Note: Optimized Huffman is not available as a flag in this TurboJPEG version */
+  
+  /* Enable optimized Huffman encoding if requested */
+  if (enc->optimized_huffman) {
+    if (tj3Set(enc->tjInstance, TJPARAM_OPTIMIZE, 1) != 0) {
+      GST_WARNING_OBJECT (enc, "Failed to enable optimized Huffman: %s", tj3GetErrorStr(enc->tjInstance));
+    }
+  } else {
+    /* Disable optimization for faster encoding */
+    tj3Set(enc->tjInstance, TJPARAM_OPTIMIZE, 0);
+  }
 
   tj_format = gst_turbojpegenc_get_tj_pixel_format (format);
   
