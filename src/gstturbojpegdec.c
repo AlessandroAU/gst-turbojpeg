@@ -349,46 +349,170 @@ gst_turbojpegdec_decode_rgb (GstTurboJpegDec * dec, GstMapInfo * map_info,
 
 static GstFlowReturn
 gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
-    GstVideoFrame * frame, gint subsamp)
+    GstVideoFrame * frame, gint subsamp, gint tj_width, gint tj_height)
 {
+  GstVideoFormat format = GST_VIDEO_FRAME_FORMAT (frame);
   gint width = GST_VIDEO_FRAME_WIDTH (frame);
   gint height = GST_VIDEO_FRAME_HEIGHT (frame);
-  GstVideoFormat format = GST_VIDEO_FRAME_FORMAT (frame);
-  unsigned char *yuvBuf = NULL;
-  size_t yuvBufSize;
+  tjhandle tjInstanceYUV = NULL;
+  unsigned char *gstPlanes[3];
+  int gstStrides[3];
   int ret;
-  guint8 *y_plane, *u_plane, *v_plane;
-  gint y_stride, u_stride, v_stride;
-  gint y_size, u_size;
-  gint y_height, u_height, v_height;
-  gint u_width, v_width;
-
+  
   GST_LOG_OBJECT (dec, "Direct YUV decoding: %dx%d, subsampling: %d, format: %s", 
       width, height, subsamp, gst_video_format_to_string (format));
 
-  g_mutex_lock (&dec->tjInstance_lock);
-  yuvBufSize = tj3YUVBufSize (width, 4, height, subsamp);
-  g_mutex_unlock (&dec->tjInstance_lock);
+  /* Create fresh TurboJPEG instance for YUV */
+  tjInstanceYUV = tj3Init (TJINIT_DECOMPRESS);
+  if (!tjInstanceYUV) {
+    GST_ERROR_OBJECT (dec, "Failed to initialize TurboJPEG instance for YUV");
+    return GST_FLOW_ERROR;
+  }
+
+  /* Get GStreamer plane pointers and strides */
+  gstPlanes[0] = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
+  gstStrides[0] = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 0);
+
+  if (format == GST_VIDEO_FORMAT_YV12) {
+    /* YV12 has V and U planes swapped */
+    gstPlanes[1] = GST_VIDEO_FRAME_PLANE_DATA (frame, 2);  /* V plane */
+    gstPlanes[2] = GST_VIDEO_FRAME_PLANE_DATA (frame, 1);  /* U plane */
+    gstStrides[1] = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 2);
+    gstStrides[2] = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 1);
+  } else {
+    /* I420, Y42B, Y444 */
+    gstPlanes[1] = GST_VIDEO_FRAME_PLANE_DATA (frame, 1);  /* U plane */
+    gstPlanes[2] = GST_VIDEO_FRAME_PLANE_DATA (frame, 2);  /* V plane */
+    gstStrides[1] = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 1);
+    gstStrides[2] = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 2);
+  }
+
+  /* Get detailed plane information for debugging */
+  gint gst_y_width = width;
+  gint gst_y_height = height;
+  gint gst_u_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 1);
+  gint gst_u_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 1);
+  gint gst_v_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 2);
+  gint gst_v_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 2);
+
+  /* Calculate expected TurboJPEG plane dimensions for this subsampling mode */
+  gint tj_y_width = tj3YUVPlaneWidth (0, tj_width, subsamp);
+  gint tj_u_width = tj3YUVPlaneWidth (1, tj_width, subsamp);
+  gint tj_v_width = tj3YUVPlaneWidth (2, tj_width, subsamp);
+  gint tj_y_height = tj3YUVPlaneHeight (0, tj_height, subsamp);
+  gint tj_u_height = tj3YUVPlaneHeight (1, tj_height, subsamp);
+  gint tj_v_height = tj3YUVPlaneHeight (2, tj_height, subsamp);
+
+  GST_WARNING_OBJECT (dec, "=== SUBSAMPLING DEBUG (mode=%d) ===", subsamp);
+  GST_WARNING_OBJECT (dec, "JPEG dimensions: %dx%d", tj_width, tj_height);
+  GST_WARNING_OBJECT (dec, "GStreamer Y plane: %dx%d stride=%d", gst_y_width, gst_y_height, gstStrides[0]);
+  GST_WARNING_OBJECT (dec, "GStreamer U plane: %dx%d stride=%d", gst_u_width, gst_u_height, gstStrides[1]);
+  GST_WARNING_OBJECT (dec, "GStreamer V plane: %dx%d stride=%d", gst_v_width, gst_v_height, gstStrides[2]);
+  GST_WARNING_OBJECT (dec, "TurboJPEG Y plane: %dx%d", tj_y_width, tj_y_height);
+  GST_WARNING_OBJECT (dec, "TurboJPEG U plane: %dx%d", tj_u_width, tj_u_height);
+  GST_WARNING_OBJECT (dec, "TurboJPEG V plane: %dx%d", tj_v_width, tj_v_height);
   
-  if (yuvBufSize == 0) {
-    GST_ERROR_OBJECT (dec, "Failed to calculate YUV buffer size");
-    return GST_FLOW_ERROR;
+  /* Check for dimension mismatches - this indicates subsampling format conversion needed */
+  gboolean needs_conversion = FALSE;
+  if (gst_u_width != tj_u_width || gst_u_height != tj_u_height || 
+      gst_v_width != tj_v_width || gst_v_height != tj_v_height) {
+    GST_WARNING_OBJECT (dec, "Subsampling format conversion needed:");
+    GST_WARNING_OBJECT (dec, "JPEG subsampling: %d, Output format: %s", subsamp, gst_video_format_to_string (format));
+    GST_WARNING_OBJECT (dec, "U plane MISMATCH! GST: %dx%d vs TJ: %dx%d", gst_u_width, gst_u_height, tj_u_width, tj_u_height);
+    GST_WARNING_OBJECT (dec, "V plane MISMATCH! GST: %dx%d vs TJ: %dx%d", gst_v_width, gst_v_height, tj_v_width, tj_v_height);
+    needs_conversion = TRUE;
   }
 
-  yuvBuf = g_malloc (yuvBufSize);
-  if (!yuvBuf) {
-    GST_ERROR_OBJECT (dec, "Failed to allocate YUV buffer of size %" G_GSIZE_FORMAT, yuvBufSize);
-    return GST_FLOW_ERROR;
+  if (needs_conversion) {
+    /* We need to decode to intermediate buffers and convert subsampling format */
+    unsigned char *tjPlanes[3];
+    int tjStrides[3];
+    
+    /* Allocate TurboJPEG buffers with original subsampling format */
+    size_t tj_y_size = tj_y_width * tj_y_height;
+    size_t tj_u_size = tj_u_width * tj_u_height;  
+    size_t tj_v_size = tj_v_width * tj_v_height;
+    
+    tjPlanes[0] = g_malloc (tj_y_size);
+    tjPlanes[1] = g_malloc (tj_u_size);
+    tjPlanes[2] = g_malloc (tj_v_size);
+    
+    if (!tjPlanes[0] || !tjPlanes[1] || !tjPlanes[2]) {
+      GST_ERROR_OBJECT (dec, "Failed to allocate TurboJPEG conversion buffers");
+      g_free (tjPlanes[0]);
+      g_free (tjPlanes[1]);
+      g_free (tjPlanes[2]);
+      tj3Destroy (tjInstanceYUV);
+      return GST_FLOW_ERROR;
+    }
+    
+    tjStrides[0] = tj_y_width;
+    tjStrides[1] = tj_u_width;
+    tjStrides[2] = tj_v_width;
+    
+    /* Decompress to TurboJPEG buffers with original subsampling */
+    ret = tj3DecompressToYUVPlanes8 (tjInstanceYUV, map_info->data, map_info->size,
+        tjPlanes, tjStrides);
+        
+    if (ret < 0) {
+      GST_ERROR_OBJECT (dec, "TurboJPEG YUV decompression failed: %s",
+          tj3GetErrorStr (tjInstanceYUV));
+      g_free (tjPlanes[0]);
+      g_free (tjPlanes[1]);
+      g_free (tjPlanes[2]);
+      tj3Destroy (tjInstanceYUV);
+      return GST_FLOW_ERROR;
+    }
+    
+    /* Copy Y plane directly (no conversion needed) */
+    for (gint i = 0; i < gst_y_height; i++) {
+      memcpy (gstPlanes[0] + i * gstStrides[0], 
+              tjPlanes[0] + i * tjStrides[0], 
+              gst_y_width);
+    }
+    
+    /* Convert and copy U plane with subsampling */
+    for (gint y = 0; y < gst_u_height; y++) {
+      for (gint x = 0; x < gst_u_width; x++) {
+        /* Calculate source coordinates for downsampling */
+        gint src_x = x * tj_u_width / gst_u_width;
+        gint src_y = y * tj_u_height / gst_u_height;
+        
+        if (src_x < tj_u_width && src_y < tj_u_height) {
+          gstPlanes[1][y * gstStrides[1] + x] = tjPlanes[1][src_y * tjStrides[1] + src_x];
+        }
+      }
+    }
+    
+    /* Convert and copy V plane with subsampling */
+    for (gint y = 0; y < gst_v_height; y++) {
+      for (gint x = 0; x < gst_v_width; x++) {
+        /* Calculate source coordinates for downsampling */
+        gint src_x = x * tj_v_width / gst_v_width;
+        gint src_y = y * tj_v_height / gst_v_height;
+        
+        if (src_x < tj_v_width && src_y < tj_v_height) {
+          gstPlanes[2][y * gstStrides[2] + x] = tjPlanes[2][src_y * tjStrides[2] + src_x];
+        }
+      }
+    }
+    
+    /* Clean up intermediate buffers */
+    g_free (tjPlanes[0]);
+    g_free (tjPlanes[1]);
+    g_free (tjPlanes[2]);
+    
+    GST_WARNING_OBJECT (dec, "Subsampling format conversion completed");
+    
+  } else {
+    /* Direct YUV decompression when formats match */
+    ret = tj3DecompressToYUVPlanes8 (tjInstanceYUV, map_info->data, map_info->size,
+        gstPlanes, gstStrides);
   }
 
-  g_mutex_lock (&dec->tjInstance_lock);
-  ret = tj3DecompressToYUV8 (dec->tjInstance, map_info->data, map_info->size, yuvBuf, 4);
-  g_mutex_unlock (&dec->tjInstance_lock);
-
+  /* Error handling is done within each branch above */
   if (ret < 0) {
-    GST_ERROR_OBJECT (dec, "TurboJPEG YUV decompression failed: %s",
-        tj3GetErrorStr (dec->tjInstance));
-    g_free (yuvBuf);
+    tj3Destroy (tjInstanceYUV);
     dec->error_count++;
     if (dec->error_count >= dec->max_errors) {
       GST_ELEMENT_ERROR (dec, STREAM, DECODE, 
@@ -399,49 +523,9 @@ gst_turbojpegdec_decode_yuv (GstTurboJpegDec * dec, GstMapInfo * map_info,
     return GST_FLOW_ERROR;
   }
 
-  y_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
-  y_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 0);
-  y_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 0);
+  tj3Destroy (tjInstanceYUV);
 
-  u_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 1);
-  u_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 1);
-  v_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 2);
-  v_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 2);
-
-  if (format == GST_VIDEO_FORMAT_YV12) {
-    u_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 2);
-    v_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 1);
-    u_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 2);
-    v_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 1);
-  } else {
-    u_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 1);
-    v_plane = GST_VIDEO_FRAME_PLANE_DATA (frame, 2);
-    u_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 1);
-    v_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 2);
-  }
-
-  g_mutex_lock (&dec->tjInstance_lock);
-  y_size = tj3YUVPlaneSize (0, width, 0, height, subsamp);
-  u_size = tj3YUVPlaneSize (1, width, 0, height, subsamp);
-  g_mutex_unlock (&dec->tjInstance_lock);
-
-  unsigned char *src_y = yuvBuf;
-  unsigned char *src_u = yuvBuf + y_size;
-  unsigned char *src_v = yuvBuf + y_size + u_size;
-
-  for (gint i = 0; i < y_height; i++) {
-    memcpy (y_plane + i * y_stride, src_y + i * width, width);
-  }
-
-  for (gint i = 0; i < u_height; i++) {
-    memcpy (u_plane + i * u_stride, src_u + i * u_width, u_width);
-  }
-
-  for (gint i = 0; i < v_height; i++) {
-    memcpy (v_plane + i * v_stride, src_v + i * v_width, v_width);
-  }
-
-  g_free (yuvBuf);
+  GST_LOG_OBJECT (dec, "Direct YUV decompression successful");
   return GST_FLOW_OK;
 }
 
@@ -533,7 +617,7 @@ gst_turbojpegdec_handle_frame (GstVideoDecoder * decoder,
   GstVideoFormat format = GST_VIDEO_FRAME_FORMAT (&video_frame);
   if (format == GST_VIDEO_FORMAT_I420 || format == GST_VIDEO_FORMAT_YV12 ||
       format == GST_VIDEO_FORMAT_Y42B || format == GST_VIDEO_FORMAT_Y444) {
-    ret = gst_turbojpegdec_decode_yuv (dec, &map_info, &video_frame, subsamp);
+    ret = gst_turbojpegdec_decode_yuv (dec, &map_info, &video_frame, subsamp, width, height);
   } else {
     ret = gst_turbojpegdec_decode_rgb (dec, &map_info, &video_frame);
   }
