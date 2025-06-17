@@ -27,6 +27,7 @@ struct _GstTurboJpegDec
   GstVideoDecoder parent;
 
   tjhandle tjInstance;
+  GMutex tjInstance_lock;
   
   gint max_errors;
   gint error_count;
