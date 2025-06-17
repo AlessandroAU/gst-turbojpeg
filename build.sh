@@ -76,7 +76,6 @@ check_dependencies() {
     pkg-config --exists gstreamer-1.0 || missing_deps+=("libgstreamer1.0-dev")
     pkg-config --exists gstreamer-base-1.0 || missing_deps+=("libgstreamer-plugins-base1.0-dev")
     pkg-config --exists gstreamer-video-1.0 || missing_deps+=("libgstreamer-plugins-base1.0-dev")
-    pkg-config --exists libturbojpeg || missing_deps+=("libturbojpeg0-dev")
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         print_status "error" "Missing dependencies:"

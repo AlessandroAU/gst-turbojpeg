@@ -81,38 +81,13 @@ public:
         gst_element_get_state(pipeline, NULL, NULL, GST_CLOCK_TIME_NONE);
     }
     
-    void generateTestData(int width, int height, const std::string& format) {
-        PatternGenerator::PatternType pattern = PatternGenerator::PatternType::SMPTE_COLOR_BARS;
+    void generateTestData(int width, int height, const std::string& format, PatternGenerator::PatternType pattern = PatternGenerator::PatternType::SMPTE_COLOR_BARS) {
         
         if (format == "RGB") {
             test_data = PatternGenerator::generateRGB(width, height, pattern);
             frame_size = width * height * 3;
         } else if (format == "I420") {
-            // For I420, we'll generate RGB and convert to YUV420 manually
-            // This is a simplified approach - in practice you'd want proper colorspace conversion
-            auto rgb_data = PatternGenerator::generateRGB(width, height, pattern);
-            test_data.resize(width * height * 3 / 2);
-            
-            // Simple RGB to YUV420 conversion (simplified)
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int rgb_idx = (y * width + x) * 3;
-                    int y_idx = y * width + x;
-                    
-                    uint8_t r = rgb_data[rgb_idx];
-                    uint8_t g = rgb_data[rgb_idx + 1];
-                    uint8_t b = rgb_data[rgb_idx + 2];
-                    
-                    // Simple Y calculation
-                    test_data[y_idx] = (uint8_t)(0.299 * r + 0.587 * g + 0.114 * b);
-                }
-            }
-            
-            // Fill U and V planes with neutral values for simplicity
-            int uv_size = width * height / 4;
-            std::fill(test_data.begin() + width * height, test_data.begin() + width * height + uv_size, 128);
-            std::fill(test_data.begin() + width * height + uv_size, test_data.end(), 128);
-            
+            test_data = generateI420FromRGB(width, height, pattern);
             frame_size = width * height * 3 / 2;  // Y + U/2 + V/2
         } else {
             throw std::runtime_error("Unsupported format: " + format);
@@ -162,6 +137,65 @@ public:
     }
 
 private:
+    std::vector<uint8_t> generateI420FromRGB(int width, int height, PatternGenerator::PatternType pattern) {
+        // Generate RGB data using pattern generator
+        auto rgb_data = PatternGenerator::generateRGB(width, height, pattern);
+        std::vector<uint8_t> i420_data(width * height * 3 / 2);
+        
+        // Convert RGB to YUV420 using proper ITU-R BT.601 coefficients
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int rgb_idx = (y * width + x) * 3;
+                int y_idx = y * width + x;
+                
+                uint8_t r = rgb_data[rgb_idx];
+                uint8_t g = rgb_data[rgb_idx + 1];
+                uint8_t b = rgb_data[rgb_idx + 2];
+                
+                // Y = 0.299*R + 0.587*G + 0.114*B (ITU-R BT.601)
+                i420_data[y_idx] = static_cast<uint8_t>(0.299 * r + 0.587 * g + 0.114 * b);
+            }
+        }
+        
+        // Calculate U and V planes (subsampled)
+        int y_plane_size = width * height;
+        int uv_plane_size = width * height / 4;
+        uint8_t* u_plane = &i420_data[y_plane_size];
+        uint8_t* v_plane = &i420_data[y_plane_size + uv_plane_size];
+        
+        for (int y = 0; y < height; y += 2) {
+            for (int x = 0; x < width; x += 2) {
+                // Sample 2x2 block for chroma subsampling
+                int sum_r = 0, sum_g = 0, sum_b = 0;
+                int count = 0;
+                
+                for (int dy = 0; dy < 2 && (y + dy) < height; dy++) {
+                    for (int dx = 0; dx < 2 && (x + dx) < width; dx++) {
+                        int rgb_idx = ((y + dy) * width + (x + dx)) * 3;
+                        sum_r += rgb_data[rgb_idx];
+                        sum_g += rgb_data[rgb_idx + 1];
+                        sum_b += rgb_data[rgb_idx + 2];
+                        count++;
+                    }
+                }
+                
+                uint8_t avg_r = sum_r / count;
+                uint8_t avg_g = sum_g / count;
+                uint8_t avg_b = sum_b / count;
+                
+                // U = -0.147*R - 0.289*G + 0.436*B + 128
+                // V = 0.615*R - 0.515*G - 0.100*B + 128
+                int uv_idx = (y / 2) * (width / 2) + (x / 2);
+                u_plane[uv_idx] = static_cast<uint8_t>(
+                    std::max(0, std::min(255, static_cast<int>(-0.147 * avg_r - 0.289 * avg_g + 0.436 * avg_b + 128))));
+                v_plane[uv_idx] = static_cast<uint8_t>(
+                    std::max(0, std::min(255, static_cast<int>(0.615 * avg_r - 0.515 * avg_g - 0.100 * avg_b + 128))));
+            }
+        }
+        
+        return i420_data;
+    }
+
     GstElement* pipeline;
     GstElement* appsrc;
     GstElement* encoder;
@@ -191,7 +225,7 @@ static void BM_GstEncodeRGB_720p_Quality80(benchmark::State& state) {
     const int width = 1280, height = 720, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "RGB");
+    g_benchmark->generateTestData(width, height, "RGB", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "RGB");
     g_benchmark->resetFrameCount();
     
@@ -214,7 +248,7 @@ static void BM_GstEncodeRGB_720p_Quality80(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 3);
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("720p SMPTE RGB -> JPEG Q80 4:2:0");
+    state.SetLabel("720p SMPTE_COLOR_BARS RGB -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -224,7 +258,7 @@ static void BM_GstEncodeRGB_1080p_Quality80(benchmark::State& state) {
     const int width = 1920, height = 1080, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "RGB");
+    g_benchmark->generateTestData(width, height, "RGB", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "RGB");
     g_benchmark->resetFrameCount();
     
@@ -247,7 +281,7 @@ static void BM_GstEncodeRGB_1080p_Quality80(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 3);
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("1080p SMPTE RGB -> JPEG Q80 4:2:0");
+    state.SetLabel("1080p SMPTE_COLOR_BARS RGB -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -257,7 +291,7 @@ static void BM_GstEncodeRGB_4K_Quality80(benchmark::State& state) {
     const int width = 3840, height = 2160, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "RGB");
+    g_benchmark->generateTestData(width, height, "RGB", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "RGB");
     g_benchmark->resetFrameCount();
     
@@ -280,7 +314,7 @@ static void BM_GstEncodeRGB_4K_Quality80(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 3);
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("4K SMPTE RGB -> JPEG Q80 4:2:0");
+    state.SetLabel("4K SMPTE_COLOR_BARS RGB -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -290,7 +324,7 @@ static void BM_GstEncodeI420_720p_Quality80(benchmark::State& state) {
     const int width = 1280, height = 720, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "I420");
+    g_benchmark->generateTestData(width, height, "I420", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "I420");
     g_benchmark->resetFrameCount();
     
@@ -313,7 +347,7 @@ static void BM_GstEncodeI420_720p_Quality80(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 1.5); // YUV420
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("1080p SMPTE I420 -> JPEG Q80 4:2:0");
+    state.SetLabel("720p SMPTE_COLOR_BARS I420 -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -323,7 +357,7 @@ static void BM_GstEncodeI420_1080p_Quality80(benchmark::State& state) {
     const int width = 1920, height = 1080, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "I420");
+    g_benchmark->generateTestData(width, height, "I420", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "I420");
     g_benchmark->resetFrameCount();
     
@@ -346,7 +380,7 @@ static void BM_GstEncodeI420_1080p_Quality80(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 1.5); // YUV420
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("1080p SMPTE I420 -> JPEG Q80 4:2:0");
+    state.SetLabel("1080p SMPTE_COLOR_BARS I420 -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -356,7 +390,7 @@ static void BM_GstEncodeI420_4K_Quality80(benchmark::State& state) {
     const int width = 3840, height = 2160, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "I420");
+    g_benchmark->generateTestData(width, height, "I420", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "I420");
     g_benchmark->resetFrameCount();
     
@@ -379,7 +413,7 @@ static void BM_GstEncodeI420_4K_Quality80(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 1.5); // YUV420
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("1080p SMPTE I420 -> JPEG Q80 4:2:0");
+    state.SetLabel("4K SMPTE_COLOR_BARS I420 -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -390,7 +424,7 @@ static void BM_GstEncodeRGB_QualityVariations(benchmark::State& state) {
     int quality = state.range(0);
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "RGB");
+    g_benchmark->generateTestData(width, height, "RGB", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "RGB");
     g_benchmark->resetFrameCount();
     
@@ -413,7 +447,7 @@ static void BM_GstEncodeRGB_QualityVariations(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 3);
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("1080p SMPTE RGB -> JPEG Q" + std::to_string(quality) + " 4:2:0");
+    state.SetLabel("1080p SMPTE_COLOR_BARS RGB -> JPEG Q" + std::to_string(quality) + " 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -433,7 +467,7 @@ static void BM_GstEncodeRGB_SubsamplingVariations(benchmark::State& state) {
     }
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
-    g_benchmark->generateTestData(width, height, "RGB");
+    g_benchmark->generateTestData(width, height, "RGB", PatternGenerator::PatternType::SMPTE_COLOR_BARS);
     g_benchmark->setupPipeline(width, height, quality, subsampling, "RGB");
     g_benchmark->resetFrameCount();
     
@@ -456,7 +490,95 @@ static void BM_GstEncodeRGB_SubsamplingVariations(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 3);
     calculateAndSetFPS(state, start_time, end_time);
-    state.SetLabel("1080p SMPTE RGB -> JPEG Q80 " + subsample_name + "");
+    state.SetLabel("1080p SMPTE_COLOR_BARS RGB -> JPEG Q80 " + subsample_name + "");
+    
+    g_benchmark->cleanup();
+    g_benchmark.reset();
+}
+
+static void BM_GstEncodeRGB_PatternVariations(benchmark::State& state) {
+    const int width = 1920, height = 1080, quality = 80, subsampling = 2; // 4:2:0
+    int pattern_idx = state.range(0);
+    
+    PatternGenerator::PatternType pattern;
+    std::string pattern_name;
+    
+    switch (pattern_idx) {
+        case 0: pattern = PatternGenerator::PatternType::GRADIENT; pattern_name = "GRADIENT"; break;
+        case 1: pattern = PatternGenerator::PatternType::CHECKERBOARD; pattern_name = "CHECKERBOARD"; break;
+        case 2: pattern = PatternGenerator::PatternType::SMPTE_COLOR_BARS; pattern_name = "SMPTE_COLOR_BARS"; break;
+        default: pattern = PatternGenerator::PatternType::SMPTE_COLOR_BARS; pattern_name = "SMPTE_COLOR_BARS"; break;
+    }
+    
+    g_benchmark.reset(new GstreamerEncoderBenchmark());
+    g_benchmark->generateTestData(width, height, "RGB", pattern);
+    g_benchmark->setupPipeline(width, height, quality, subsampling, "RGB");
+    g_benchmark->resetFrameCount();
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (auto _ : state) {
+        g_benchmark->benchmarkEncode();
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    // Validate that we processed exactly one frame per iteration
+    if (g_benchmark->getFramesProcessed() != static_cast<size_t>(state.iterations())) {
+        state.SkipWithError(("Frame count mismatch: expected " + std::to_string(state.iterations()) + 
+                           ", got " + std::to_string(g_benchmark->getFramesProcessed())).c_str());
+        return;
+    }
+    
+    // Calculate metrics
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 3);
+    calculateAndSetFPS(state, start_time, end_time);
+    state.SetLabel("1080p " + pattern_name + " RGB -> JPEG Q80 4:2:0");
+    
+    g_benchmark->cleanup();
+    g_benchmark.reset();
+}
+
+static void BM_GstEncodeI420_PatternVariations(benchmark::State& state) {
+    const int width = 1920, height = 1080, quality = 80, subsampling = 2; // 4:2:0
+    int pattern_idx = state.range(0);
+    
+    PatternGenerator::PatternType pattern;
+    std::string pattern_name;
+    
+    switch (pattern_idx) {
+        case 0: pattern = PatternGenerator::PatternType::GRADIENT; pattern_name = "GRADIENT"; break;
+        case 1: pattern = PatternGenerator::PatternType::CHECKERBOARD; pattern_name = "CHECKERBOARD"; break;
+        case 2: pattern = PatternGenerator::PatternType::SMPTE_COLOR_BARS; pattern_name = "SMPTE_COLOR_BARS"; break;
+        default: pattern = PatternGenerator::PatternType::SMPTE_COLOR_BARS; pattern_name = "SMPTE_COLOR_BARS"; break;
+    }
+    
+    g_benchmark.reset(new GstreamerEncoderBenchmark());
+    g_benchmark->generateTestData(width, height, "I420", pattern);
+    g_benchmark->setupPipeline(width, height, quality, subsampling, "I420");
+    g_benchmark->resetFrameCount();
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (auto _ : state) {
+        g_benchmark->benchmarkEncode();
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    // Validate that we processed exactly one frame per iteration
+    if (g_benchmark->getFramesProcessed() != static_cast<size_t>(state.iterations())) {
+        state.SkipWithError(("Frame count mismatch: expected " + std::to_string(state.iterations()) + 
+                           ", got " + std::to_string(g_benchmark->getFramesProcessed())).c_str());
+        return;
+    }
+    
+    // Calculate metrics
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 1.5); // YUV420
+    calculateAndSetFPS(state, start_time, end_time);
+    state.SetLabel("1080p " + pattern_name + " I420 -> JPEG Q80 4:2:0");
     
     g_benchmark->cleanup();
     g_benchmark.reset();
@@ -471,5 +593,7 @@ BENCHMARK(BM_GstEncodeI420_1080p_Quality80)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstEncodeI420_4K_Quality80)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstEncodeRGB_QualityVariations)->Arg(50)->Arg(75)->Arg(90)->Arg(95)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_GstEncodeRGB_SubsamplingVariations)->Arg(0)->Arg(1)->Arg(2)->Arg(3)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_GstEncodeRGB_PatternVariations)->DenseRange(0, 2, 1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_GstEncodeI420_PatternVariations)->DenseRange(0, 2, 1)->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();

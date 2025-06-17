@@ -23,7 +23,7 @@ libjpeg_build_dir = meson.current_build_dir() / 'libjpeg-turbo-build'
 libjpeg_build = custom_target('libjpeg-turbo-build',
   command: [
     'sh', '-c', 
-    'mkdir -p @0@ && cd @0@ && cmake @1@/subprojects/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release -DWITH_MEM_SRCDST=ON -DWITH_TURBOJPEG=ON -DWITH_SIMD=ON -DENABLE_SHARED=ON -DENABLE_STATIC=ON && make -j$(nproc) turbojpeg turbojpeg-static && cp libturbojpeg.so* @2@/ && cp libturbojpeg.a @2@/'.format(libjpeg_build_dir, meson.current_source_dir(), meson.current_build_dir())
+    'mkdir -p @0@ && cd @0@ && cmake @1@/subprojects/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release -DWITH_MEM_SRCDST=ON -DWITH_TURBOJPEG=ON -DWITH_SIMD=ON -DENABLE_SHARED=ON -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON && make -j$(nproc) turbojpeg turbojpeg-static && cp libturbojpeg.so* @2@/ && cp libturbojpeg.a @2@/'.format(libjpeg_build_dir, meson.current_source_dir(), meson.current_build_dir())
   ],
   output: ['stamp'],
   build_by_default: true,
