@@ -286,8 +286,74 @@ static void BM_GstEncodeRGB_4K_Quality80(benchmark::State& state) {
     g_benchmark.reset();
 }
 
+static void BM_GstEncodeI420_720p_Quality80(benchmark::State& state) {
+    const int width = 1280, height = 720, quality = 80, subsampling = 2; // 4:2:0
+    
+    g_benchmark.reset(new GstreamerEncoderBenchmark());
+    g_benchmark->generateTestData(width, height, "I420");
+    g_benchmark->setupPipeline(width, height, quality, subsampling, "I420");
+    g_benchmark->resetFrameCount();
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (auto _ : state) {
+        g_benchmark->benchmarkEncode();
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    // Validate that we processed exactly one frame per iteration
+    if (g_benchmark->getFramesProcessed() != static_cast<size_t>(state.iterations())) {
+        state.SkipWithError(("Frame count mismatch: expected " + std::to_string(state.iterations()) + 
+                           ", got " + std::to_string(g_benchmark->getFramesProcessed())).c_str());
+        return;
+    }
+    
+    // Calculate metrics
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 1.5); // YUV420
+    calculateAndSetFPS(state, start_time, end_time);
+    state.SetLabel("1080p SMPTE I420 -> JPEG Q80 4:2:0");
+    
+    g_benchmark->cleanup();
+    g_benchmark.reset();
+}
+
 static void BM_GstEncodeI420_1080p_Quality80(benchmark::State& state) {
     const int width = 1920, height = 1080, quality = 80, subsampling = 2; // 4:2:0
+    
+    g_benchmark.reset(new GstreamerEncoderBenchmark());
+    g_benchmark->generateTestData(width, height, "I420");
+    g_benchmark->setupPipeline(width, height, quality, subsampling, "I420");
+    g_benchmark->resetFrameCount();
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    for (auto _ : state) {
+        g_benchmark->benchmarkEncode();
+    }
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    
+    // Validate that we processed exactly one frame per iteration
+    if (g_benchmark->getFramesProcessed() != static_cast<size_t>(state.iterations())) {
+        state.SkipWithError(("Frame count mismatch: expected " + std::to_string(state.iterations()) + 
+                           ", got " + std::to_string(g_benchmark->getFramesProcessed())).c_str());
+        return;
+    }
+    
+    // Calculate metrics
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * width * height * 1.5); // YUV420
+    calculateAndSetFPS(state, start_time, end_time);
+    state.SetLabel("1080p SMPTE I420 -> JPEG Q80 4:2:0");
+    
+    g_benchmark->cleanup();
+    g_benchmark.reset();
+}
+
+static void BM_GstEncodeI420_4K_Quality80(benchmark::State& state) {
+    const int width = 3840, height = 2160, quality = 80, subsampling = 2; // 4:2:0
     
     g_benchmark.reset(new GstreamerEncoderBenchmark());
     g_benchmark->generateTestData(width, height, "I420");
