@@ -188,8 +188,7 @@ show_post_install() {
     fi
 
     echo "Example usage:"
-    echo "  gst-launch-1.0 videotestsrc ! jpegenc ! turbojpegdec ! autovideosink"
-    echo "  gst-launch-1.0 videotestsrc ! jpegenc ! turbojpegdec num-threads=4 ! autovideosink"
+    echo "  gst-launch-1.0 videotestsrc ! video/x-raw,width=1920,height=1080 ! imagefreeze ! turbojpegenc ! queue ! turbojpegdec ! perf ! fakesink sync=false"
 }
 
 # Parse command line arguments
