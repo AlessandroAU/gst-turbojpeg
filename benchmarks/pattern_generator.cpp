@@ -292,7 +292,7 @@ uint8_t PatternGenerator::smpteColorBarsPattern(int x, int y, int width, int hei
     // Calculate vertical sections
     int top_height = height * 2 / 3;          // Top 2/3
     int middle_height = height * 1 / 12;      // 1/12 height
-    int bottom_height = height - top_height - middle_height;  // Remaining
+    // int bottom_height = height - top_height - middle_height;  // Remaining (unused)
     
     if (y < top_height) {
         // Top section - 8 color bars

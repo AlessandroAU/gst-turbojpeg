@@ -78,6 +78,21 @@ endif
 # Force building from submodule source with performance flags
 message('Building TurboJPEG from submodule source with performance optimizations...')
 
+# Check if submodule is initialized, if not, initialize it
+submodule_path = meson.current_source_dir() / 'subprojects' / 'libjpeg-turbo'
+submodule_cmake = submodule_path / 'CMakeLists.txt'
+submodule_check = run_command('test', '-f', submodule_cmake, check: false)
+if submodule_check.returncode() != 0
+  message('Initializing libjpeg-turbo git submodule...')
+  submodule_init = run_command('git', 'submodule', 'update', '--init', '--recursive',
+                                check: false,
+                                capture: true)
+  if submodule_init.returncode() != 0
+    error('Failed to initialize git submodule. Please run: git submodule update --init --recursive')
+  endif
+  message('Submodule initialized successfully')
+endif
+
 libjpeg_build_dir = meson.current_build_dir() / 'libjpeg-turbo-build'
 
 # Performance-optimized CMake flags for libjpeg-turbo
