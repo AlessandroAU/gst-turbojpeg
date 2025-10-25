@@ -45,8 +45,12 @@ GST_STATIC_PAD_TEMPLATE ("src",
 #define gst_turbojpegenc_parent_class parent_class
 G_DEFINE_TYPE (GstTurboJpegEnc, gst_turbojpegenc, GST_TYPE_VIDEO_ENCODER);
 
-GST_ELEMENT_REGISTER_DEFINE (turbojpegenc, "turbojpegenc", GST_RANK_PRIMARY + 1,
-    GST_TYPE_TURBOJPEGENC);
+gboolean
+gst_turbojpegenc_register (GstPlugin * plugin)
+{
+  return gst_element_register (plugin, "turbojpegenc", GST_RANK_PRIMARY + 1,
+      GST_TYPE_TURBOJPEGENC);
+}
 
 static void gst_turbojpegenc_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);
@@ -323,7 +327,7 @@ gst_turbojpegenc_handle_frame (GstVideoEncoder * encoder,
   gint width, height;
   gulong jpeg_size;
   GstBuffer *output_buffer;
-  int flags = 0;
+  // int flags = 0;  // Currently unused, reserved for future TurboJPEG options
   
   if (!gst_video_frame_map (&vframe, &enc->input_state->info, 
           frame->input_buffer, GST_MAP_READ)) {

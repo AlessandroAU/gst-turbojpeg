@@ -54,8 +54,12 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
 #define gst_turbojpegdec_parent_class parent_class
 G_DEFINE_TYPE (GstTurboJpegDec, gst_turbojpegdec, GST_TYPE_VIDEO_DECODER);
 
-GST_ELEMENT_REGISTER_DEFINE (turbojpegdec, "turbojpegdec", GST_RANK_PRIMARY + 1,
-    GST_TYPE_TURBOJPEGDEC);
+gboolean
+gst_turbojpegdec_register (GstPlugin * plugin)
+{
+  return gst_element_register (plugin, "turbojpegdec", GST_RANK_PRIMARY + 1,
+      GST_TYPE_TURBOJPEGDEC);
+}
 
 static void gst_turbojpegdec_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);

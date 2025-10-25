@@ -43,8 +43,7 @@ struct _GstTurboJpegDecClass
 };
 
 GType gst_turbojpegdec_get_type (void);
-
-GST_ELEMENT_REGISTER_DECLARE (turbojpegdec);
+gboolean gst_turbojpegdec_register (GstPlugin * plugin);
 
 G_END_DECLS
 

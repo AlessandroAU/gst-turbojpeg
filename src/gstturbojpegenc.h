@@ -47,8 +47,7 @@ struct _GstTurboJpegEncClass
 };
 
 GType gst_turbojpegenc_get_type (void);
-
-GST_ELEMENT_REGISTER_DECLARE (turbojpegenc);
+gboolean gst_turbojpegenc_register (GstPlugin * plugin);
 
 G_END_DECLS
 

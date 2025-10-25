@@ -12,8 +12,8 @@ plugin_init (GstPlugin * plugin)
 {
   gboolean ret = FALSE;
 
-  ret |= GST_ELEMENT_REGISTER (turbojpegdec, plugin);
-  ret |= GST_ELEMENT_REGISTER (turbojpegenc, plugin);
+  ret |= gst_turbojpegdec_register (plugin);
+  ret |= gst_turbojpegenc_register (plugin);
 
   return ret;
 }
