@@ -1,0 +1,48 @@
+# Build directories
+builddir/
+build/
+_build/
+
+# Meson build files
+.mesonpy-*
+compile_commands.json
+
+# Object files
+*.o
+*.so
+*.so.*
+*.a
+*.la
+*.lo
+
+# Compiled Dynamic libraries
+*.dll
+*.dylib
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Debug and test output
+*.log
+*.out
+core
+vgcore.*
+turbojpeg_debug/
+test_images/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
